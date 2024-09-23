@@ -140,7 +140,7 @@ async def advantage_spoll_choker(bot, query):
     else:
         await bot.send_message(LOG_CHANNEL, script.NO_RESULT_TXT.format(query.message.chat.title, query.message.chat.id, query.from_user.mention, search))
         k = await query.message.edit(f"\n👋 Hello {query.from_user.mention},\n\n <b> Your Movie: </b><b>'{search}'</b><b> \n \n Will Be Uploaded Here 👇 Join Now </b>",
-                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⭕ Join Here ⭕", url= https://t.me/+i6615w1O7xg0ZDI9)]]))
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⭕ Join Here ⭕", url=SPELL_LNK)]]))
         await asyncio.sleep(30)
         await k.delete()
         try:
