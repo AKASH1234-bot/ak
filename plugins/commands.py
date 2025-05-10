@@ -27,7 +27,7 @@ async def start(client, message):
         ], [
             InlineKeyboardButton('⚜️ Join Movie Request Group ⚜️', url= 'https://t.me/+AngJ8lGmH4wwNWY1')],
         [
-            InlineKeyboardButton('🎬 Join Movie Updates Channel 🎬', url='https://t.me/+jG9GemdISt9jOGM1')
+            InlineKeyboardButton('🎬 Join Movie Updates Channel 🎬', url='https://t.me/+JyN02nw7VO9hNjll')
         ], 
         ]
             
