@@ -18,7 +18,7 @@ def is_enabled(value, default):
 SESSION = environ.get('SESSION', 'Media_search')
 API_ID = int(environ.get('API_ID', '4052973'))
 API_HASH = environ.get('API_HASH', '3238bd8ae26df065d11c4054fe8a231c')
-BOT_TOKEN = environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')  # 🔐 set in env
+BOT_TOKEN = environ.get('BOT_TOKEN', '')
 
 
 # ================= SETTINGS ================= #
@@ -77,21 +77,13 @@ PORT = int(environ.get("PORT", 8080))
 
 # ================= DATABASE ================= #
 
-# 🔥 Put your REAL MongoDB URI in ENV (recommended)
-DATABASE_URI = environ.get(
-    'DATABASE_URI',
-    "mongodb+srv://YOUR_USERNAME:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority"
-)
-
-DATABASE_NAME = environ.get('DATABASE_NAME', "Cluster0")
+DATABASE_URI = environ.get('DATABASE_URI', '')
+DATABASE_NAME = environ.get('DATABASE_NAME', 'AkBot')
 COLLECTION_NAME = environ.get('COLLECTION_NAME', 'Telegram_Files')
 
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
-
-# ✅ CRITICAL FIX (prevents ImportError crash)
 FILES_DATABASE = environ.get('FILES_DATABASE', DATABASE_URI)
 
-# Buttons config
 MAX_BTN = int(environ.get('MAX_BTN', 10))
 
 
@@ -143,4 +135,4 @@ URL_SHORTNER_WEBSITE_API = environ.get('URL_SHORTNER_WEBSITE_API', 'your_api_key
 
 LOGO_PATH = environ.get('LOGO_PATH', 'logo.jpg')
 
-LOG_STR = "Bot started successfully with current configuration ✅"
+LOG_STR = "Bot started successfully with current configuration"
