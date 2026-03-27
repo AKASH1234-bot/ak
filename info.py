@@ -3,6 +3,7 @@ from os import environ
 
 id_pattern = re.compile(r'^.\d+$')
 
+
 def is_enabled(value, default):
     if str(value).lower() in ["true", "yes", "1", "enable", "y"]:
         return True
@@ -17,13 +18,14 @@ def is_enabled(value, default):
 SESSION = environ.get('SESSION', 'Media_search')
 API_ID = int(environ.get('API_ID', '4052973'))
 API_HASH = environ.get('API_HASH', '3238bd8ae26df065d11c4054fe8a231c')
-BOT_TOKEN = environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')  # 🔐 change in env
+BOT_TOKEN = environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')  # 🔐 set in env
 
 
 # ================= SETTINGS ================= #
 
 CACHE_TIME = int(environ.get('CACHE_TIME', 300))
-USE_CAPTION_FILTER = bool(environ.get('USE_CAPTION_FILTER', False))
+USE_CAPTION_FILTER = is_enabled(environ.get('USE_CAPTION_FILTER', "False"), False)
+
 PICS = environ.get(
     'PICS',
     'https://te.legra.ph/file/aa5e35b86c0018c346ca6.jpg'
@@ -75,9 +77,10 @@ PORT = int(environ.get("PORT", 8080))
 
 # ================= DATABASE ================= #
 
+# 🔥 Put your REAL MongoDB URI in ENV (recommended)
 DATABASE_URI = environ.get(
     'DATABASE_URI',
-    "mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
+    "mongodb+srv://YOUR_USERNAME:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority"
 )
 
 DATABASE_NAME = environ.get('DATABASE_NAME', "Cluster0")
@@ -85,10 +88,10 @@ COLLECTION_NAME = environ.get('COLLECTION_NAME', 'Telegram_Files')
 
 JOIN_REQS_DB = environ.get("JOIN_REQS_DB", DATABASE_URI)
 
-# ✅ CRITICAL FIX (THIS WAS MISSING)
+# ✅ CRITICAL FIX (prevents ImportError crash)
 FILES_DATABASE = environ.get('FILES_DATABASE', DATABASE_URI)
 
-# already exists but kept safe
+# Buttons config
 MAX_BTN = int(environ.get('MAX_BTN', 10))
 
 
@@ -140,4 +143,4 @@ URL_SHORTNER_WEBSITE_API = environ.get('URL_SHORTNER_WEBSITE_API', 'your_api_key
 
 LOGO_PATH = environ.get('LOGO_PATH', 'logo.jpg')
 
-LOG_STR = "Bot configuration loaded successfully ✅"
+LOG_STR = "Bot started successfully with current configuration ✅"
