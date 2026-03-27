@@ -61,13 +61,16 @@ async def save_file(media):
             return 'suc'
 
 
-# ââ MODIFIED: added `quality` parameter âââââââââââââââââââââââââââââââââââââ
-async def get_search_results(query, max_results=MAX_BTN, offset=0, lang=None, quality=None):
+# ✅ FIX 1: Added `filter=False` parameter to accept calls from pm_filter.py
+# ✅ FIX 2: Renamed internal `filter` variable to `query_filter` to avoid
+#           shadowing Python's built-in filter() function
+async def get_search_results(query, max_results=MAX_BTN, offset=0, lang=None, quality=None, filter=False):
     """
     Search files from DB.
-    lang     â filter by language keyword (e.g. 'Malayalam')
-    quality  â filter by quality keyword  (e.g. '720p')
-    Both can be combined with a query string.
+    lang     — filter by language keyword (e.g. 'Malayalam')
+    quality  — filter by quality keyword  (e.g. '720p')
+    filter   — accepted for compatibility, not used internally
+    Both lang and quality can be combined with a query string.
     """
     query = query.strip()
     if not query:
@@ -82,11 +85,11 @@ async def get_search_results(query, max_results=MAX_BTN, offset=0, lang=None, qu
     except Exception:
         regex = query
 
-    filter = {'file_name': regex}
+    query_filter = {'file_name': regex}
 
-    # ââ quality filter (new) âââââââââââââââââââââââââââââââââââââââââââââ
+    # quality filter
     if quality:
-        cursor_all = Media.find(filter)
+        cursor_all = Media.find(query_filter)
         cursor_all.sort('$natural', -1)
         quality_files = [
             f async for f in cursor_all
@@ -98,12 +101,11 @@ async def get_search_results(query, max_results=MAX_BTN, offset=0, lang=None, qu
         if next_offset >= total_results:
             next_offset = ''
         return files, next_offset, total_results
-    # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-    cursor = Media.find(filter)
+    cursor = Media.find(query_filter)
     cursor.sort('$natural', -1)
 
-    # ââ language filter (existing, kept intact) ââââââââââââââââââââââââââ
+    # language filter
     if lang:
         lang_files = [
             file async for file in cursor
@@ -115,11 +117,10 @@ async def get_search_results(query, max_results=MAX_BTN, offset=0, lang=None, qu
         if next_offset >= total_results:
             next_offset = ''
         return files, next_offset, total_results
-    # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     cursor.skip(offset).limit(max_results)
     files = await cursor.to_list(length=max_results)
-    total_results = await Media.count_documents(filter)
+    total_results = await Media.count_documents(query_filter)
     next_offset = offset + max_results
     if next_offset >= total_results:
         next_offset = ''
@@ -140,20 +141,20 @@ async def get_bad_files(query, file_type=None, offset=0, filter=False):
     except Exception:
         return []
 
-    filter = {'file_name': regex}
+    query_filter = {'file_name': regex}
     if file_type:
-        filter['file_type'] = file_type
+        query_filter['file_type'] = file_type
 
-    total_results = await Media.count_documents(filter)
-    cursor = Media.find(filter)
+    total_results = await Media.count_documents(query_filter)
+    cursor = Media.find(query_filter)
     cursor.sort('$natural', -1)
     files = await cursor.to_list(length=total_results)
     return files, total_results
 
 
 async def get_file_details(query):
-    filter = {'file_id': query}
-    cursor = Media.find(filter)
+    query_filter = {'file_id': query}
+    cursor = Media.find(query_filter)
     filedetails = await cursor.to_list(length=1)
     return filedetails
 
