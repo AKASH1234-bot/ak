@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import re
 import ast
 import math
@@ -14,126 +15,104 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# ─── HOW TO DOWNLOAD TUTORIAL ────────────────────────────────────────────────
-HOW_TO_DL_TEXT = """
-📥 **How to Download**
+# ══════════════════════════════════════════════════════════
+#  CONSTANTS & STATE
+# ══════════════════════════════════════════════════════════
 
-**Step 1:** Search for your movie name in the group.
-**Step 2:** Bot will show results with quality & language options.
-**Step 3:** Use 🌐 Language and 📊 Quality buttons to filter results.
-**Step 4:** Tap the file button to get the download link.
-**Step 5:** Click the link → Bot will send you the file directly.
+HOW_TO_DL_TEXT = (
+    "📥 **How to Download**\n\n"
+    "**Step 1:** Type the movie name in the group.\n"
+    "**Step 2:** Bot shows results with filter buttons.\n"
+    "**Step 3:** Pick Language 🌐 and Quality 📊.\n"
+    "**Step 4:** Tap 🔍 Show Results.\n"
+    "**Step 5:** Click a file button — bot sends it to PM.\n\n"
+    "💡 **Tips:**\n"
+    "• Use short movie names\n"
+    "• Try different spellings\n"
+    "• Select language first, then quality\n\n"
+    "🤖 Powered by **Eva Maria Bot**"
+)
 
-💡 **Tips:**
-• Use short movie names for better results
-• Try different spellings if not found
-• Select language first, then quality
-
-🤖 Powered by **Eva Maria Bot**
-"""
-
-# ─── FILTER SELECTION STATE ───────────────────────────────────────────────────
-# Stores {msg_id: {"query": str, "lang": str, "quality": str, "files": list, "chat": int}}
+# In-memory session store: {state_id: {...}}
 filter_state = {}
 
 LANGUAGES = ["Malayalam", "Tamil", "Hindi", "English", "All"]
-QUALITIES = ["480p", "720p", "1080p", "All"]
+QUALITIES  = ["480p", "720p", "1080p", "All"]
 
-LANG_EMOJI = {
-    "Malayalam": "🇮🇳", "Tamil": "🎭", "Hindi": "🎬", "English": "🌍", "All": "🔍"
-}
-QUAL_EMOJI = {
-    "480p": "📱", "720p": "💻", "1080p": "🖥️", "All": "🔍"
-}
+LANG_EMOJI = {"Malayalam": "🇮🇳", "Tamil": "🎭", "Hindi": "🎬", "English": "🌍", "All": "🔍"}
+QUAL_EMOJI = {"480p": "📱", "720p": "💻", "1080p": "🖥️", "All": "🔍"}
 
+
+# ══════════════════════════════════════════════════════════
+#  HELPERS
+# ══════════════════════════════════════════════════════════
 
 def build_lang_keyboard(state_id, selected_lang="All", selected_qual="All"):
-    """Build language + quality filter keyboard."""
-    lang_buttons = []
+    lang_rows = []
     for i in range(0, len(LANGUAGES), 3):
         row = []
         for lang in LANGUAGES[i:i+3]:
             tick = "✅ " if lang == selected_lang else ""
             row.append(InlineKeyboardButton(
-                f"{tick}{LANG_EMOJI.get(lang,'')} {lang}",
+                f"{tick}{LANG_EMOJI.get(lang, '')} {lang}",
                 callback_data=f"lang#{state_id}#{lang}#{selected_qual}"
             ))
-        lang_buttons.append(row)
+        lang_rows.append(row)
 
-    qual_buttons = []
-    for i in range(0, len(QUALITIES), 4):
-        row = []
-        for qual in QUALITIES[i:i+4]:
-            tick = "✅ " if qual == selected_qual else ""
-            row.append(InlineKeyboardButton(
-                f"{tick}{QUAL_EMOJI.get(qual,'')} {qual}",
-                callback_data=f"qual#{state_id}#{selected_lang}#{qual}"
-            ))
-        qual_buttons.append(row)
+    qual_row = []
+    for qual in QUALITIES:
+        tick = "✅ " if qual == selected_qual else ""
+        qual_row.append(InlineKeyboardButton(
+            f"{tick}{QUAL_EMOJI.get(qual, '')} {qual}",
+            callback_data=f"qual#{state_id}#{selected_lang}#{qual}"
+        ))
 
-    bottom = [
+    action_row = [
         InlineKeyboardButton("🔍 Show Results", callback_data=f"show#{state_id}#{selected_lang}#{selected_qual}"),
-        InlineKeyboardButton("❌ Close", callback_data="close_filter")
+        InlineKeyboardButton("❌ Close",         callback_data="close_filter")
     ]
-    return InlineKeyboardMarkup(lang_buttons + qual_buttons + [bottom])
+    return InlineKeyboardMarkup(lang_rows + [qual_row, action_row])
 
 
 def apply_filters(files, lang="All", quality="All"):
-    """Filter file list by language and quality keywords."""
     filtered = []
     for f in files:
         fname = f.get("file_name", "").lower()
-        # Language filter
-        if lang != "All":
-            if lang.lower() not in fname:
-                continue
-        # Quality filter
-        if quality != "All":
-            if quality.lower() not in fname:
-                continue
+        if lang != "All" and lang.lower() not in fname:
+            continue
+        if quality != "All" and quality.lower() not in fname:
+            continue
         filtered.append(f)
-    return filtered if filtered else files  # fallback to all if nothing matches
+    return filtered or files   # fallback: show all if nothing matches
 
 
-def format_file_caption(file_name, file_size):
-    """Format a clean, modern caption for each file."""
-    size_str = get_size(file_size)
+def detect_quality(fname):
+    for q in ["2160p", "4K", "1080p", "720p", "480p", "360p"]:
+        if q.lower() in fname.lower():
+            return q
+    return "N/A"
 
-    # Detect quality
-    quality = "Unknown"
-    for q in ["2160p", "1080p", "720p", "480p", "360p"]:
-        if q.lower() in file_name.lower():
-            quality = q
-            break
 
-    # Detect language
-    lang = "Unknown"
-    for l in ["Malayalam", "Tamil", "Hindi", "Telugu", "Kannada", "English"]:
-        if l.lower() in file_name.lower():
-            lang = l
-            break
-    # Also detect multi-audio / dubbed
-    if "multi" in file_name.lower():
-        lang = "Multi Audio"
-    elif "dubbed" in file_name.lower():
-        lang += " Dubbed"
+def detect_lang(fname):
+    fl = fname.lower()
+    if "multi" in fl:
+        return "Multi Audio"
+    for l in ["malayalam", "tamil", "hindi", "telugu", "kannada", "english"]:
+        if l in fl:
+            lang = l.capitalize()
+            return f"{lang} Dubbed" if "dubbed" in fl else lang
+    return "N/A"
 
-    # Clean movie name (strip quality/lang tags)
-    clean_name = re.sub(
-        r'[\[\(].*?[\]\)]', '', file_name
-    ).strip().replace('_', ' ').replace('.', ' ')
-    clean_name = re.sub(r'\s+', ' ', clean_name).strip()
 
-    caption = (
-        f"🎬 **{clean_name}**\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🌐 **Language :** `{lang}`\n"
-        f"📊 **Quality  :** `{quality}`\n"
-        f"📁 **Size     :** `{size_str}`\n"
-        f"━━━━━━━━━━━━━━━"
-    )
-    return caption
+def btn_label(fname):
+    quality = detect_quality(fname)
+    short   = fname[:38].strip()
+    return f"🎬 {short} [{quality}]"
 
+
+# ══════════════════════════════════════════════════════════
+#  MAIN FILTER HANDLER  (replaces original give_filter)
+# ══════════════════════════════════════════════════════════
 
 @Client.on_message(filters.group & filters.text & filters.incoming)
 async def give_filter(client, message):
@@ -145,23 +124,21 @@ async def give_filter(client, message):
     if not files:
         return
 
-    # Store state
     state_id = str(message.id)
     filter_state[state_id] = {
-        "query": message.text,
-        "files": files,
-        "offset": offset,
-        "total": total,
-        "chat": message.chat.id,
-        "lang": "All",
+        "query":   message.text,
+        "files":   files,
+        "offset":  offset,
+        "total":   total,
+        "chat":    message.chat.id,
+        "lang":    "All",
         "quality": "All",
     }
 
-    # Build header message with How to Download + filter buttons
     header = (
-        f"🔍 **Search Results for:** `{message.text}`\n"
-        f"📦 **Found:** `{total}` files\n\n"
-        f"🌐 Select **Language** and 📊 **Quality** to filter results:"
+        f"🔍 **Search:** `{message.text}`\n"
+        f"📦 **Found:** `{total}` file(s)\n\n"
+        f"Filter by Language and Quality below 👇"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -171,6 +148,10 @@ async def give_filter(client, message):
 
     await message.reply(header, reply_markup=keyboard, quote=True)
 
+
+# ══════════════════════════════════════════════════════════
+#  CALLBACK HANDLERS
+# ══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^how_to_dl#"))
 async def how_to_download(client, query):
@@ -184,12 +165,10 @@ async def lang_filter_cb(client, query):
     if state_id not in filter_state:
         return await query.answer("Session expired. Search again.", show_alert=True)
     filter_state[state_id]["lang"] = lang
-    keyboard = build_lang_keyboard(state_id, selected_lang=lang, selected_qual=qual)
-    try:
-        await query.message.edit_reply_markup(keyboard)
-    except Exception:
-        pass
-    await query.answer(f"Language set to {lang}")
+    await query.message.edit_reply_markup(
+        build_lang_keyboard(state_id, selected_lang=lang, selected_qual=qual)
+    )
+    await query.answer(f"Language: {lang}")
 
 
 @Client.on_callback_query(filters.regex(r"^qual#"))
@@ -198,12 +177,10 @@ async def qual_filter_cb(client, query):
     if state_id not in filter_state:
         return await query.answer("Session expired. Search again.", show_alert=True)
     filter_state[state_id]["quality"] = qual
-    keyboard = build_lang_keyboard(state_id, selected_lang=lang, selected_qual=qual)
-    try:
-        await query.message.edit_reply_markup(keyboard)
-    except Exception:
-        pass
-    await query.answer(f"Quality set to {qual}")
+    await query.message.edit_reply_markup(
+        build_lang_keyboard(state_id, selected_lang=lang, selected_qual=qual)
+    )
+    await query.answer(f"Quality: {qual}")
 
 
 @Client.on_callback_query(filters.regex(r"^show#"))
@@ -212,45 +189,32 @@ async def show_results_cb(client, query):
     if state_id not in filter_state:
         return await query.answer("Session expired. Search again.", show_alert=True)
 
-    state = filter_state[state_id]
-    files = state["files"]
-    filtered = apply_filters(files, lang=lang, quality=qual)
+    state    = filter_state[state_id]
+    filtered = apply_filters(state["files"], lang=lang, quality=qual)
 
-    if not filtered:
-        return await query.answer("No files found for selected filters. Showing all.", show_alert=True)
+    await query.answer(f"Showing {len(filtered)} result(s)")
 
-    await query.answer(f"Showing {len(filtered)} results")
-
-    # Send each result as a button
     btn = []
     for file in filtered[:10]:
-        fname = file.get("file_name", "N/A")
-        fsize = file.get("file_size", 0)
-        fid = file.get("_id")
-        caption = format_file_caption(fname, fsize)
-
-        # Detect quality badge for button label
-        badge = ""
-        for q in ["1080p", "720p", "480p"]:
-            if q.lower() in fname.lower():
-                badge = f" [{q}]"
-                break
-
-        btn.append([InlineKeyboardButton(
-            f"🎬 {fname[:40]}{badge}",
-            callback_data=f"filep#{fid}"
-        )])
+        fname = file.get("file_name", "Unknown")
+        fid   = file.get("_id", "")
+        btn.append([InlineKeyboardButton(btn_label(fname), callback_data=f"filep#{fid}")])
 
     btn.append([
         InlineKeyboardButton("🔁 Change Filters", callback_data=f"refilter#{state_id}"),
-        InlineKeyboardButton("❌ Close", callback_data="close_filter"),
+        InlineKeyboardButton("❌ Close",           callback_data="close_filter"),
     ])
 
     result_text = (
-        f"✅ **Results** | 🌐 `{lang}` | 📊 `{qual}`\n"
-        f"📦 Showing `{len(filtered)}` of `{state['total']}` files\n"
+        f"✅ **Results**\n"
+        f"🌐 Language: `{lang}` | 📊 Quality: `{qual}`\n"
+        f"📦 Showing `{len(filtered)}` of `{state['total']}` files"
     )
-    await query.message.reply(result_text, reply_markup=InlineKeyboardMarkup(btn), quote=True)
+    await query.message.reply(
+        result_text,
+        reply_markup=InlineKeyboardMarkup(btn),
+        quote=True
+    )
 
 
 @Client.on_callback_query(filters.regex(r"^refilter#"))
@@ -261,10 +225,14 @@ async def refilter_cb(client, query):
     state = filter_state[state_id]
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 How to Download", callback_data=f"how_to_dl#{state_id}")],
-        *build_lang_keyboard(state_id, selected_lang=state["lang"], selected_qual=state["quality"]).inline_keyboard
+        *build_lang_keyboard(
+            state_id,
+            selected_lang=state["lang"],
+            selected_qual=state["quality"]
+        ).inline_keyboard
     ])
     await query.message.reply(
-        f"🔍 **Refilter:** `{state['query']}`\n🌐 Choose Language & 📊 Quality:",
+        f"🔍 **Refilter:** `{state['query']}`\nChoose Language and Quality:",
         reply_markup=keyboard,
         quote=True
     )
@@ -279,13 +247,17 @@ async def close_filter_cb(client, query):
 
 @Client.on_callback_query(filters.regex(r"^filep#"))
 async def file_pm_cb(client, query):
-    """Send file to user PM."""
+    """
+    Relay to the original file-send logic.
+    The original bot uses 'files#' or similar callback in pm_filter.py.
+    We just notify the user here.
+    """
     _, file_id = query.data.split("#", 1)
-    await query.answer("Sending file to your PM...", show_alert=False)
+    await query.answer("Sending to your PM...", show_alert=False)
     try:
-        # This triggers the existing file send logic via pm_filter
         await query.message.reply(
-            "📨 **File is being sent to your PM!**\n👆 Check your messages.",
+            "📨 **File is being sent to your PM!**\n"
+            "If nothing arrives, start the bot in PM first.",
             quote=True
         )
     except Exception as e:
