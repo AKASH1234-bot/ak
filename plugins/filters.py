@@ -1,273 +1,259 @@
-import io
-from pyrogram import filters, Client, enums
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from database.filters_mdb import(
-   add_filter,
-   get_filters,
-   delete_filter,
-   count_filters
+import logging
+import re
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from database.ia_filterdb import Media, get_search_results
+from database.users_chats_db import db
+from info import ADMINS, AUTH_CHANNEL, LOG_CHANNEL, CLONE_MODE
+from utils import (
+    get_settings,
+    save_group_settings,
+    temp,
+    is_subscribed,
+    get_size,
+    get_shortlink
 )
 
-from database.connections_mdb import active_connection
-from utils import get_file_id, parser, split_quotes
-from info import ADMINS
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# ── Filter Options ────────────────────────────────────────────────────────────
+
+LANGUAGES = ["Malayalam", "Tamil", "Hindi", "Telugu", "English", "Kannada", "Bengali", "Punjabi"]
+QUALITIES = ["480p", "720p", "1080p", "4K", "HDRip", "DVDRip", "BluRay"]
 
 
-@Client.on_message(filters.command(['filter', 'add']) & filters.incoming)
-async def addfilter(client, message):
-    userid = message.from_user.id if message.from_user else None
-    if not userid:
-        return await message.reply(f"You are anonymous admin. Use /connect {message.chat.id} in PM")
-    chat_type = message.chat.type
-    args = message.text.html.split(None, 1)
-
-    if chat_type == enums.ChatType.PRIVATE:
-        grpid = await active_connection(str(userid))
-        if grpid is not None:
-            grp_id = grpid
-            try:
-                chat = await client.get_chat(grpid)
-                title = chat.title
-            except:
-                await message.reply_text("Make sure I'm present in your group!!", quote=True)
-                return
-        else:
-            await message.reply_text("I'm not connected to any groups!", quote=True)
-            return
-
-    elif chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        grp_id = message.chat.id
-        title = message.chat.title
-
-    else:
-        return
-
-    st = await client.get_chat_member(grp_id, userid)
-    if (
-        st.status != enums.ChatMemberStatus.ADMINISTRATOR
-        and st.status != enums.ChatMemberStatus.OWNER
-        and str(userid) not in ADMINS
-    ):
-        return
+def _lang_buttons(selected: list) -> list:
+    rows = []
+    for i in range(0, len(LANGUAGES), 2):
+        row = []
+        for lang in LANGUAGES[i:i+2]:
+            tick = "✅ " if lang in selected else ""
+            row.append(InlineKeyboardButton(f"{tick}{lang}", callback_data=f"lf_{lang}"))
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton("✔ Done", callback_data="lf_done"),
+        InlineKeyboardButton("🔄 Reset", callback_data="lf_reset")
+    ])
+    return rows
 
 
-    if len(args) < 2:
-        await message.reply_text("Command Incomplete :(", quote=True)
-        return
+def _qual_buttons(selected: list) -> list:
+    rows = []
+    for i in range(0, len(QUALITIES), 3):
+        row = []
+        for q in QUALITIES[i:i+3]:
+            tick = "✅ " if q in selected else ""
+            row.append(InlineKeyboardButton(f"{tick}{q}", callback_data=f"qf_{q}"))
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton("✔ Done", callback_data="qf_done"),
+        InlineKeyboardButton("🔄 Reset", callback_data="qf_reset")
+    ])
+    return rows
 
-    extracted = split_quotes(args[1])
-    text = extracted[0].lower()
 
-    if not message.reply_to_message and len(extracted) < 2:
-        await message.reply_text("Add some content to save your filter!", quote=True)
-        return
+def _passes_filters(file_name: str, languages: list, qualities: list) -> bool:
+    """Return True if file passes active language and quality filters."""
+    name = file_name.lower()
+    lang_ok = (not languages) or any(l.lower() in name for l in languages)
+    qual_ok = (not qualities) or any(q.lower() in name for q in qualities)
+    return lang_ok and qual_ok
 
-    if (len(extracted) >= 2) and not message.reply_to_message:
-        reply_text, btn, alert = parser(extracted[1], text)
-        fileid = None
-        if not reply_text:
-            await message.reply_text("You cannot have buttons alone, give some text to go with it!", quote=True)
-            return
 
-    elif message.reply_to_message and message.reply_to_message.reply_markup:
-        try:
-            rm = message.reply_to_message.reply_markup
-            btn = rm.inline_keyboard
-            msg = get_file_id(message.reply_to_message)
-            if msg:
-                fileid = msg.file_id
-                reply_text = message.reply_to_message.caption.html
-            else:
-                reply_text = message.reply_to_message.text.html
-                fileid = None
-            alert = None
-        except:
-            reply_text = ""
-            btn = "[]" 
-            fileid = None
-            alert = None
+# ── Language Filter Commands ──────────────────────────────────────────────────
 
-    elif message.reply_to_message and message.reply_to_message.media:
-        try:
-            msg = get_file_id(message.reply_to_message)
-            fileid = msg.file_id if msg else None
-            reply_text, btn, alert = parser(extracted[1], text) if message.reply_to_message.sticker else parser(message.reply_to_message.caption.html, text)
-        except:
-            reply_text = ""
-            btn = "[]"
-            alert = None
-    elif message.reply_to_message and message.reply_to_message.text:
-        try:
-            fileid = None
-            reply_text, btn, alert = parser(message.reply_to_message.text.html, text)
-        except:
-            reply_text = ""
-            btn = "[]"
-            alert = None
-    else:
-        return
-
-    await add_filter(grp_id, text, reply_text, btn, fileid, alert)
-
-    await message.reply_text(
-        f"Filter for  `{text}`  added in  **{title}**",
-        quote=True,
-        parse_mode=enums.ParseMode.MARKDOWN
+@Client.on_message(filters.command("setlang") & filters.group)
+async def set_language_filter(client: Client, message: Message):
+    if message.from_user.id not in ADMINS:
+        return await message.reply("⚠️ Only admins can set filters.")
+    settings = await get_settings(message.chat.id)
+    selected = settings.get("language_filter", [])
+    await message.reply(
+        "🌐 **Language Filter**\nSelect languages to include. Leave empty to show all languages.",
+        reply_markup=InlineKeyboardMarkup(_lang_buttons(selected))
     )
 
 
-@Client.on_message(filters.command(['viewfilters', 'filters']) & filters.incoming)
-async def get_all(client, message):
-    
-    chat_type = message.chat.type
-    userid = message.from_user.id if message.from_user else None
-    if not userid:
-        return await message.reply(f"You are anonymous admin. Use /connect {message.chat.id} in PM")
-    if chat_type == enums.ChatType.PRIVATE:
-        grpid = await active_connection(str(userid))
-        if grpid is not None:
-            grp_id = grpid
-            try:
-                chat = await client.get_chat(grpid)
-                title = chat.title
-            except:
-                await message.reply_text("Make sure I'm present in your group!!", quote=True)
-                return
-        else:
-            await message.reply_text("I'm not connected to any groups!", quote=True)
-            return
-
-    elif chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        grp_id = message.chat.id
-        title = message.chat.title
-
-    else:
-        return
-
-    st = await client.get_chat_member(grp_id, userid)
-    if (
-        st.status != enums.ChatMemberStatus.ADMINISTRATOR
-        and st.status != enums.ChatMemberStatus.OWNER
-        and str(userid) not in ADMINS
-    ):
-        return
-
-    texts = await get_filters(grp_id)
-    count = await count_filters(grp_id)
-    if count:
-        filterlist = f"Total number of filters in **{title}** : {count}\n\n"
-
-        for text in texts:
-            keywords = " ×  `{}`\n".format(text)
-
-            filterlist += keywords
-
-        if len(filterlist) > 4096:
-            with io.BytesIO(str.encode(filterlist.replace("`", ""))) as keyword_file:
-                keyword_file.name = "keywords.txt"
-                await message.reply_document(
-                    document=keyword_file,
-                    quote=True
-                )
-            return
-    else:
-        filterlist = f"There are no active filters in **{title}**"
-
-    await message.reply_text(
-        text=filterlist,
-        quote=True,
-        parse_mode=enums.ParseMode.MARKDOWN
+@Client.on_message(filters.command("setquality") & filters.group)
+async def set_quality_filter(client: Client, message: Message):
+    if message.from_user.id not in ADMINS:
+        return await message.reply("⚠️ Only admins can set filters.")
+    settings = await get_settings(message.chat.id)
+    selected = settings.get("quality_filter", [])
+    await message.reply(
+        "📺 **Quality Filter**\nSelect qualities to include. Leave empty to show all qualities.",
+        reply_markup=InlineKeyboardMarkup(_qual_buttons(selected))
     )
-        
-@Client.on_message(filters.command('del') & filters.incoming)
-async def deletefilter(client, message):
-    userid = message.from_user.id if message.from_user else None
-    if not userid:
-        return await message.reply(f"You are anonymous admin. Use /connect {message.chat.id} in PM")
-    chat_type = message.chat.type
 
-    if chat_type == enums.ChatType.PRIVATE:
-        grpid = await active_connection(str(userid))
-        if grpid is not None:
-            grp_id = grpid
-            try:
-                chat = await client.get_chat(grpid)
-                title = chat.title
-            except:
-                await message.reply_text("Make sure I'm present in your group!!", quote=True)
-                return
+
+# ── Language Filter Callbacks ─────────────────────────────────────────────────
+
+@Client.on_callback_query(filters.regex(r"^lf_"))
+async def language_filter_cb(client: Client, query: CallbackQuery):
+    if query.from_user.id not in ADMINS:
+        return await query.answer("Only admins can change this!", show_alert=True)
+    data = query.data[3:]
+    settings = await get_settings(query.message.chat.id)
+    selected = list(settings.get("language_filter", []))
+
+    if data == "done":
+        await save_group_settings(query.message.chat.id, "language_filter", selected)
+        label = ', '.join(selected) if selected else 'All Languages'
+        return await query.message.edit(f"✅ Language filter saved: **{label}**")
+    elif data == "reset":
+        selected = []
+        await save_group_settings(query.message.chat.id, "language_filter", [])
+    elif data in LANGUAGES:
+        if data in selected:
+            selected.remove(data)
         else:
-            await message.reply_text("I'm not connected to any groups!", quote=True)
-            return
+            selected.append(data)
+        await save_group_settings(query.message.chat.id, "language_filter", selected)
 
-    elif chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        grp_id = message.chat.id
-        title = message.chat.title
+    await query.message.edit_reply_markup(InlineKeyboardMarkup(_lang_buttons(selected)))
+    await query.answer()
 
-    else:
+
+# ── Quality Filter Callbacks ──────────────────────────────────────────────────
+
+@Client.on_callback_query(filters.regex(r"^qf_"))
+async def quality_filter_cb(client: Client, query: CallbackQuery):
+    if query.from_user.id not in ADMINS:
+        return await query.answer("Only admins can change this!", show_alert=True)
+    data = query.data[3:]
+    settings = await get_settings(query.message.chat.id)
+    selected = list(settings.get("quality_filter", []))
+
+    if data == "done":
+        await save_group_settings(query.message.chat.id, "quality_filter", selected)
+        label = ', '.join(selected) if selected else 'All Qualities'
+        return await query.message.edit(f"✅ Quality filter saved: **{label}**")
+    elif data == "reset":
+        selected = []
+        await save_group_settings(query.message.chat.id, "quality_filter", [])
+    elif data in QUALITIES:
+        if data in selected:
+            selected.remove(data)
+        else:
+            selected.append(data)
+        await save_group_settings(query.message.chat.id, "quality_filter", selected)
+
+    await query.message.edit_reply_markup(InlineKeyboardMarkup(_qual_buttons(selected)))
+    await query.answer()
+
+
+# ── Main Auto Filter Handler ──────────────────────────────────────────────────
+
+@Client.on_message(filters.group & filters.text & filters.incoming)
+async def auto_filter(client, message):
+    # Ignore commands
+    if message.text.startswith("/"):
         return
 
-    st = await client.get_chat_member(grp_id, userid)
-    if (
-        st.status != enums.ChatMemberStatus.ADMINISTRATOR
-        and st.status != enums.ChatMemberStatus.OWNER
-        and str(userid) not in ADMINS
-    ):
+    chat_id = message.chat.id
+
+    # Check if chat is disabled/banned
+    if chat_id in temp.BANNED_CHATS:
+        return
+    if message.from_user and message.from_user.id in temp.BANNED_USERS:
         return
 
-    try:
-        cmd, text = message.text.split(" ", 1)
-    except:
-        await message.reply_text(
-            "<i>Mention the filtername which you wanna delete!</i>\n\n"
-            "<code>/del filtername</code>\n\n"
-            "Use /viewfilters to view all available filters",
-            quote=True
+    settings = await get_settings(chat_id)
+    if not settings.get('auto_filter', True):
+        return
+
+    query = message.text.strip()
+    if not query or len(query) < 3:
+        return
+
+    # Check subscription if AUTH_CHANNEL is set
+    if AUTH_CHANNEL and not await is_subscribed(client, message):
+        btn = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{AUTH_CHANNEL}")]]
+        await message.reply(
+            "**You need to join our channel to use this bot!**",
+            reply_markup=InlineKeyboardMarkup(btn)
         )
         return
 
-    query = text.lower()
+    # Get language & quality filters for this group
+    lang_filter = settings.get("language_filter", [])
+    qual_filter = settings.get("quality_filter", [])
 
-    await delete_filter(message, query, grp_id)
-        
+    # Fetch results from DB (fetch more to allow for filter narrowing)
+    fetch_limit = 200 if (lang_filter or qual_filter) else 10
+    files, next_offset, total = await get_search_results(query, max_results=fetch_limit)
 
-@Client.on_message(filters.command('delall') & filters.incoming)
-async def delallconfirm(client, message):
-    userid = message.from_user.id if message.from_user else None
-    if not userid:
-        return await message.reply(f"You are anonymous admin. Use /connect {message.chat.id} in PM")
-    chat_type = message.chat.type
-
-    if chat_type == enums.ChatType.PRIVATE:
-        grpid = await active_connection(str(userid))
-        if grpid is not None:
-            grp_id = grpid
-            try:
-                chat = await client.get_chat(grpid)
-                title = chat.title
-            except:
-                await message.reply_text("Make sure I'm present in your group!!", quote=True)
-                return
-        else:
-            await message.reply_text("I'm not connected to any groups!", quote=True)
-            return
-
-    elif chat_type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        grp_id = message.chat.id
-        title = message.chat.title
-
-    else:
+    if not files:
+        btn = [[InlineKeyboardButton("🔍 Search Again", switch_inline_query_current_chat=query)]]
+        await message.reply(
+            f"**No results found for** `{query}`\n\nMake sure you spelled it correctly.",
+            reply_markup=InlineKeyboardMarkup(btn)
+        )
         return
 
+    # Apply language and quality filters
+    if lang_filter or qual_filter:
+        files = [f for f in files if _passes_filters(f.file_name or "", lang_filter, qual_filter)]
 
-    st = await client.get_chat_member(grp_id, userid)
-    if (st.status == enums.ChatMemberStatus.OWNER) or (str(userid) in ADMINS):
-        await message.reply_text(
-            f"This will delete all filters from '{title}'.\nDo you want to continue??",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(text="YES",callback_data="delallconfirm")],
-                [InlineKeyboardButton(text="CANCEL",callback_data="delallcancel")]
-            ]),
-            quote=True
+    if not files:
+        active_filters = []
+        if lang_filter:
+            active_filters.append(f"Language: {', '.join(lang_filter)}")
+        if qual_filter:
+            active_filters.append(f"Quality: {', '.join(qual_filter)}")
+        await message.reply(
+            f"**No results match your active filters:**\n"
+            f"`{chr(10).join(active_filters)}`\n\n"
+            f"Use /setlang or /setquality to change filters."
+        )
+        return
+
+    # ── Build result buttons ──────────────────────────────────────────────────
+    btn = []
+    for file in files[:10]:
+        # Track request count for trending feature
+        await Media.increment_request_count(file.file_id)
+
+        file_name = file.file_name
+        file_size = get_size(file.file_size)
+        btn.append(
+            [InlineKeyboardButton(
+                f"🎬 {file_name} [{file_size}]",
+                callback_data=f"fileid#{file.file_id}"
+            )]
         )
 
+    # Add filter status row if filters are active
+    status_parts = []
+    if lang_filter:
+        status_parts.append(f"🌐 {', '.join(lang_filter)}")
+    if qual_filter:
+        status_parts.append(f"📺 {', '.join(qual_filter)}")
+    if status_parts:
+        btn.append([InlineKeyboardButton(
+            "Active Filters: " + " | ".join(status_parts),
+            callback_data="filter_info"
+        )])
+
+    await message.reply(
+        f"**Here are the results for** `{query}`\n"
+        f"**Total found:** `{len(files)}`",
+        reply_markup=InlineKeyboardMarkup(btn)
+    )
+
+
+# ── Filter Info Callback (non-functional info button) ─────────────────────────
+
+@Client.on_callback_query(filters.regex(r"^filter_info$"))
+async def filter_info_cb(client: Client, query: CallbackQuery):
+    settings = await get_settings(query.message.chat.id)
+    lang = settings.get("language_filter", [])
+    qual = settings.get("quality_filter", [])
+    text = (
+        f"**Active Filters for this group:**\n\n"
+        f"🌐 Language: `{', '.join(lang) if lang else 'All'}`\n"
+        f"📺 Quality: `{', '.join(qual) if qual else 'All'}`\n\n"
+        f"Admins can change using /setlang and /setquality"
+    )
+    await query.answer(text, show_alert=True)
