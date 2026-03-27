@@ -60,7 +60,9 @@ async def send_for_index(bot, message):
         last_msg_id = int(match.group(5))
         if chat_id.isnumeric():
             chat_id  = int(("-100" + chat_id))
-    elif message.forward_from_chat.type == enums.ChatType.CHANNEL:
+    elif message.forward_from_chat and message.forward_from_chat.type == enums.ChatType.CHANNEL:
+        # ✅ FIX: Added 'message.forward_from_chat and' guard to prevent
+        # AttributeError: 'NoneType' object has no attribute 'type'
         last_msg_id = message.forward_from_message_id
         chat_id = message.forward_from_chat.username or message.forward_from_chat.id
     else:
