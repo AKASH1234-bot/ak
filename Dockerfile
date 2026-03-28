@@ -1,33 +1,22 @@
-FROM ubuntu:18.04
+FROM python:3.10-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update
-RUN echo y | apt-get install locales
-RUN echo y | apt install build-essential
-RUN apt -qq install -y --no-install-recommends \
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
     git \
-    gnupg2 \
-    wget \
+    && apt-get autoclean \
+    && apt-get autoremove \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN set -ex; \
-    apt-get update \
-    && apt-get install -y --no-install-recommends \
-        busybox \
-	git \
-	python3 \
-	python3-dev \
-	python3-pip \
-	python3-lxml \
-	pv \
-	&& apt-get autoclean \
-        && apt-get autoremove \
-        && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
-RUN pip3 install setuptools wheel yarl multidict
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
-RUN dpkg-reconfigure locales
-COPY . /app
+RUN pip3 install --no-cache-dir setuptools wheel
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-CMD ["python3", "bot.py"]
+COPY . .
+
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:8080 & python3 bot.py"]
