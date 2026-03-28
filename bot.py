@@ -1,7 +1,7 @@
 import logging
 import logging.config
 import asyncio
-# Get logging configurations
+import os
 logging.config.fileConfig('logging.conf')
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
@@ -40,12 +40,13 @@ class Bot(Client):
         temp.U_NAME = me.username
         temp.B_NAME = me.first_name
         self.username = '@' + me.username
-        # web-response
+        # Use a separate port for bot's internal web server
+        # gunicorn already owns PORT (10000), so bot uses 8080
+        web_port = int(os.environ.get("WEB_PORT", 8080))
         app = web.AppRunner(await web_server())
         await app.setup()
-        bind_address = "0.0.0.0"
-        await web.TCPSite(app, bind_address, PORT).start()
-        logging.info(f"{me.first_name} with for Pyrogram v{__version__} (Layer {layer}) started on {me.username}.")
+        await web.TCPSite(app, "0.0.0.0", web_port).start()
+        logging.info(f"{me.first_name} with Pyrogram v{__version__} (Layer {layer}) started on {me.username}.")
         logging.info(LOG_STR)
 
     async def stop(self, *args):
