@@ -1,47 +1,89 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Script.py  –  ADD these strings at the end of your existing Script.py file
-# Do NOT replace the whole file. Append only the section below.
-# ─────────────────────────────────────────────────────────────────────────────
+class script(object):
 
-# Append these to your existing `script` class:
-
+    START_TXT = """
+Hello {},
+I am an Auto Filter Bot. I will give you movies and series.
+Add me to your group and index your channel to get started.
 """
-ADDITIONS TO script class in Script.py
----------------------------------------
-Add inside the `class script:` body:
 
-    HOW_TO_DL = \"""
-📥 **How to Download**
+    HELP_TXT = """
+**Available Commands:**
+/start - Start the bot
+/help - Get this help message
+/about - About this bot
+/filter - Add manual filter
+/filters - View all filters
+/del - Delete a filter
+/delall - Delete all filters
+/stats - Get database stats
+/id - Get Telegram IDs
+/info - Get user info
+/imdb - Search IMDB
+/index - Index a channel
+/delete - Delete a file
+/deleteall - Delete all indexed files
+"""
 
-**Step 1:** Search for your movie name in the group.
-**Step 2:** Bot will show results with quality & language options.
-**Step 3:** Use 🌐 Language and 📊 Quality buttons to filter results.
-**Step 4:** Tap the file button to get the download link.
-**Step 5:** Click the link → Bot will send you the file directly in PM.
+    ABOUT_TXT = """
+**About This Bot**
+Bot: {}
+Developer: @YourUsername
+Language: Python
+Library: Pyrogram
+"""
 
-💡 **Tips:**
-• Use short movie names for better results  
-• Try different spellings if not found  
-• Select language first, then quality  
+    IMDB_TEMPLATE = """
+**{title}** ({year})
+Rating: {rating}/10
+Genres: {genres}
+Language: {languages}
+"""
 
-🤖 Powered by **Eva Maria Bot**
-\"""
+    FILE_CAPTION = """
+**{file_name}**
+Size: {file_size}
+"""
 
-    FILTER_HEADER = \"""
-🔍 **Search Results for:** `{query}`
-📦 **Found:** `{total}` files
+    BUTTON_LOCK_TXT = """
+You need to join our channel to use this bot.
+"""
 
-🌐 Select **Language** and 📊 **Quality** to filter:
-\"""
+    NO_RESULTS = """
+No results found for **{}**
+Try a different search term.
+"""
 
-    NO_RESULTS_MSG = \"""
-❌ **No Results Found**
+    HOW_TO_DL = """
+How to Download
 
-Movie: `{query}`
+Step 1: Type the movie name in the group.
+Step 2: Bot shows results with filter buttons.
+Step 3: Pick Language and Quality.
+Step 4: Tap Show Results.
+Step 5: Click a file — bot sends it to your PM.
 
-**Try:**
-• Shorter name
-• Different spelling
-• Remove year from name
-\"""
+Tips:
+- Use short movie names
+- Try different spellings
+- Select language first then quality
+
+Powered by Eva Maria Bot
+"""
+
+    FILTER_HEADER = """
+Search Results for: {query}
+Found: {total} files
+
+Select Language and Quality to filter:
+"""
+
+    NO_RESULTS_MSG = """
+No Results Found
+
+Movie: {query}
+
+Try:
+- Shorter name
+- Different spelling
+- Remove year from name
 """
