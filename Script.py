@@ -27,7 +27,7 @@ Add me to your group and index your channel to get started.
     ABOUT_TXT = """
 **About This Bot**
 Bot: {}
-Developer: @YourUsername
+Developer: Eva Maria
 Language: Python
 Library: Pyrogram
 """
@@ -39,8 +39,7 @@ Genres: {genres}
 Language: {languages}
 """
 
-    FILE_CAPTION = """
-**{file_name}**
+    FILE_CAPTION = """**{file_name}**
 Size: {file_size}
 """
 
@@ -51,6 +50,38 @@ You need to join our channel to use this bot.
     NO_RESULTS = """
 No results found for **{}**
 Try a different search term.
+"""
+
+    LOG_TEXT_G = """
+#NewGroup
+Group: {}
+ID: {}
+Members: {}
+By: {}
+"""
+
+    LOG_TEXT_P = """
+#NewUser
+ID: {}
+User: {}
+"""
+
+    BATCH_FILES_BTN = "Get Files"
+
+    FILE_STORE_LINK = "Here is your file link:\n{}"
+
+    MELCOW_NEW_USERS = """
+Welcome {} to {}!
+"""
+
+    SPELL_CHECK_TXT = """
+Did you mean: **{}** ?
+"""
+
+    IMDB_TEMPLATE_TXT = """
+**{title}** ({year})
+Rating: {rating}
+Genres: {genres}
 """
 
     HOW_TO_DL = """
