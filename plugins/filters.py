@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
+import re
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from database.ia_filterdb import get_search_results  # ✅ CORRECT function name
-from utils import get_size, get_settings
+from database.ia_filterdb import get_search_results
+from utils import get_size
 
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════
-#  STATE & CONSTANTS
+#  STATE
 # ══════════════════════════════════════════════════════════
 
 filter_state = {}
@@ -26,9 +27,80 @@ HOW_TO_DL_TEXT = (
     "Tips:\n"
     "- Use short movie names\n"
     "- Try different spellings\n"
-    "- Select language first, then quality\n\n"
+    "- Select language first then quality\n\n"
     "Powered by Eva Maria Bot"
 )
+
+# Quality priority for deduplication (higher = better)
+QUALITY_PRIORITY = {"2160p": 5, "4k": 5, "1080p": 4, "720p": 3, "480p": 2, "360p": 1, "n/a": 0}
+
+
+# ══════════════════════════════════════════════════════════
+#  DEDUPLICATION HELPERS
+# ══════════════════════════════════════════════════════════
+
+def normalize_name(name: str) -> str:
+    """Lowercase, remove symbols, collapse spaces."""
+    name = name.lower()
+    name = re.sub(r'[\[\](){}@#$%^&*!.,;:\'"\\/-]', ' ', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
+
+
+def detect_quality(fname: str) -> str:
+    fname_lower = fname.lower()
+    for q in ["2160p", "4k", "1080p", "720p", "480p", "360p"]:
+        if q in fname_lower:
+            return q
+    return "n/a"
+
+
+def detect_lang(fname: str) -> str:
+    fl = fname.lower()
+    if "multi" in fl:
+        return "multi"
+    for l in ["malayalam", "tamil", "hindi", "telugu", "kannada", "english"]:
+        if l in fl:
+            return l
+    return "unknown"
+
+
+def deduplicate(files):
+    """
+    Remove duplicate files.
+    Key = (normalized_name, language, quality)
+    If duplicate exists, keep the one with higher quality priority.
+    """
+    seen = {}  # key -> (file, quality_priority)
+
+    for f in files:
+        fname = f.file_name if hasattr(f, 'file_name') else f.get("file_name", "")
+        if not fname:
+            continue
+
+        quality = detect_quality(fname)
+        lang    = detect_lang(fname)
+
+        # Strip quality/lang/year tags to get clean movie name
+        clean = re.sub(
+            r'(19|20)\d{2}|2160p|1080p|720p|480p|360p|4k|hdrip|bluray|webrip|'
+            r'hdtv|dvdrip|x264|x265|hevc|aac|hindi|tamil|malayalam|telugu|'
+            r'kannada|english|multi|dubbed|web-dl|mkv|mp4|avi',
+            ' ', fname.lower(), flags=re.IGNORECASE
+        )
+        clean = normalize_name(clean)
+
+        key = (clean, lang, quality)
+        prio = QUALITY_PRIORITY.get(quality, 0)
+
+        if key not in seen:
+            seen[key] = (f, prio)
+        else:
+            # Keep higher quality version
+            if prio > seen[key][1]:
+                seen[key] = (f, prio)
+
+    return [item[0] for item in seen.values()]
 
 
 # ══════════════════════════════════════════════════════════
@@ -37,8 +109,6 @@ HOW_TO_DL_TEXT = (
 
 def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
     rows = []
-
-    # Language buttons — 3 per row
     for i in range(0, len(LANGUAGES), 3):
         row = []
         for lang in LANGUAGES[i:i+3]:
@@ -49,7 +119,6 @@ def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
             ))
         rows.append(row)
 
-    # Quality buttons — all in one row
     qual_row = []
     for qual in QUALITIES:
         tick = "[OK] " if qual == sel_qual else ""
@@ -59,17 +128,15 @@ def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
         ))
     rows.append(qual_row)
 
-    # Action buttons
     rows.append([
         InlineKeyboardButton("Show Results", callback_data=f"show#{state_id}#{sel_lang}#{sel_qual}"),
         InlineKeyboardButton("Close",        callback_data="close_filter")
     ])
-
     return InlineKeyboardMarkup(rows)
 
 
 # ══════════════════════════════════════════════════════════
-#  HELPERS
+#  FILTER HELPERS
 # ══════════════════════════════════════════════════════════
 
 def apply_filters(files, lang="All", quality="All"):
@@ -81,34 +148,25 @@ def apply_filters(files, lang="All", quality="All"):
         if quality != "All" and quality.lower() not in name:
             continue
         out.append(f)
-    return out or files  # fallback: show all if nothing matches
-
-
-def detect_quality(fname):
-    for q in ["2160p", "4K", "1080p", "720p", "480p", "360p"]:
-        if q.lower() in fname.lower():
-            return q
-    return "N/A"
-
-
-def make_btn_label(fname):
-    q = detect_quality(fname)
-    short = fname[:40].strip()
-    return f"{short} [{q}]"
+    return out or files
 
 
 def get_fname(f):
-    """Safely get file_name from both object and dict."""
     if hasattr(f, 'file_name'):
         return f.file_name or "Unknown"
     return f.get("file_name", "Unknown")
 
 
 def get_fid(f):
-    """Safely get file _id from both object and dict."""
     if hasattr(f, 'file_id'):
         return str(f.file_id)
     return str(f.get("_id", ""))
+
+
+def make_btn_label(fname):
+    q = detect_quality(fname)
+    short = fname[:40].strip()
+    return f"{short} [{q.upper()}]"
 
 
 # ══════════════════════════════════════════════════════════
@@ -121,13 +179,16 @@ async def give_filter(client, message):
     if not query_text or query_text.startswith("/"):
         return
 
-    # ✅ Uses correct function: get_search_results
     try:
         files, next_offset, total = await get_search_results(
-            query_text,
-            max_results=10,
-            offset=0
+            query_text, max_results=50, offset=0
         )
+    except TypeError:
+        try:
+            files, next_offset, total = await get_search_results(query_text)
+        except Exception as e:
+            logger.exception(e)
+            return
     except Exception as e:
         logger.exception(e)
         return
@@ -135,20 +196,23 @@ async def give_filter(client, message):
     if not files:
         return
 
+    # ✅ Deduplicate before storing
+    files = deduplicate(files)
+    total = len(files)
+
     state_id = str(message.id)
     filter_state[state_id] = {
-        "query":       query_text,
-        "files":       files,
-        "next_offset": next_offset,
-        "total":       total,
-        "chat":        message.chat.id,
-        "lang":        "All",
-        "quality":     "All",
+        "query":   query_text,
+        "files":   files,
+        "total":   total,
+        "chat":    message.chat.id,
+        "lang":    "All",
+        "quality": "All",
     }
 
     header = (
         f"Search: {query_text}\n"
-        f"Found: {total} file(s)\n\n"
+        f"Found: {total} unique file(s)\n\n"
         f"Select Language and Quality to filter:"
     )
 
@@ -161,7 +225,7 @@ async def give_filter(client, message):
 
 
 # ══════════════════════════════════════════════════════════
-#  CALLBACK HANDLERS
+#  CALLBACKS
 # ══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^how_to_dl#"))
