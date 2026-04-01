@@ -38,7 +38,7 @@ QUALITY_PRIORITY = {"2160p": 5, "4k": 5, "1080p": 4, "720p": 3, "480p": 2, "360p
 
 
 # ══════════════════════════════════════════════════════════
-#  AUTO DELETE  ← NEW
+#  AUTO DELETE
 # ══════════════════════════════════════════════════════════
 
 async def _delete_later(*msgs):
@@ -51,12 +51,11 @@ async def _delete_later(*msgs):
 
 
 def auto_delete(*msgs):
-    """Non-blocking. Schedules msgs for deletion after 300 s."""
     asyncio.create_task(_delete_later(*msgs))
 
 
 # ══════════════════════════════════════════════════════════
-#  DEDUPLICATION HELPERS  (unchanged logic)
+#  DEDUPLICATION HELPERS
 # ══════════════════════════════════════════════════════════
 
 def normalize_name(name: str) -> str:
@@ -119,7 +118,10 @@ def get_fsize(f):
 
 
 def get_fid(f):
-    return str(f.file_id if hasattr(f, 'file_id') else f.get("_id", ""))
+    # Store both message_id and chat_id so pm_filter can fetch the real file
+    msg_id  = str(f.id if hasattr(f, 'id') else f.get("message_id", "0"))
+    chat_id = str(f.chat.id if hasattr(f, 'chat') and f.chat else f.get("channel_id", "0"))
+    return f"{msg_id}|{chat_id}"
 
 
 def make_btn_label(fname):
@@ -141,7 +143,7 @@ def apply_filters(files, lang="All", quality="All"):
 
 
 # ══════════════════════════════════════════════════════════
-#  MESSAGE FORMAT  ← NEW
+#  MESSAGE FORMAT
 # ══════════════════════════════════════════════════════════
 
 def results_header(query, files, lang, quality):
@@ -162,50 +164,46 @@ def results_header(query, files, lang, quality):
 
 def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
     rows = []
-
-    # Row 1 – Languages (3 per row)
     for i in range(0, len(LANGUAGES), 3):
         row = []
         for lang in LANGUAGES[i:i + 3]:
             tick = "✅ " if lang == sel_lang else ""
             row.append(InlineKeyboardButton(
                 f"{tick}{lang}",
-                callback_data=f"lang#{state_id}#{lang}#{sel_qual}"
+                callback_data=f"fl_lang#{state_id}#{lang}#{sel_qual}"
             ))
         rows.append(row)
 
-    # Row 2 – Qualities
     rows.append([
         InlineKeyboardButton(
             ("✅ " if q == sel_qual else "") + q,
-            callback_data=f"qual#{state_id}#{sel_lang}#{q}"
+            callback_data=f"fl_qual#{state_id}#{sel_lang}#{q}"
         )
         for q in QUALITIES
     ])
 
-    # Row 3 – Actions
     rows.append([
-        InlineKeyboardButton("📥 How to Download", callback_data=f"how_to_dl#{state_id}"),
-        InlineKeyboardButton("🎬 Show Results",     callback_data=f"show#{state_id}#{sel_lang}#{sel_qual}"),
-        InlineKeyboardButton("✖ Close",             callback_data="close_filter"),
+        InlineKeyboardButton("📥 How to Download", callback_data=f"fl_howdl#{state_id}"),
+        InlineKeyboardButton("🎬 Show Results",     callback_data=f"fl_show#{state_id}#{sel_lang}#{sel_qual}"),
+        InlineKeyboardButton("✖ Close",             callback_data="fl_close"),
     ])
     return InlineKeyboardMarkup(rows)
 
 
 def build_file_keyboard(state_id, filtered):
     btn = [
-        [InlineKeyboardButton(make_btn_label(get_fname(f)), callback_data=f"filep#{get_fid(f)}")]
+        [InlineKeyboardButton(make_btn_label(get_fname(f)), callback_data=f"fl_file#{get_fid(f)}")]
         for f in filtered[:10]
     ]
     btn.append([
-        InlineKeyboardButton("🔄 Change Filters", callback_data=f"refilter#{state_id}"),
-        InlineKeyboardButton("✖ Close",           callback_data="close_filter"),
+        InlineKeyboardButton("🔄 Change Filters", callback_data=f"fl_refilter#{state_id}"),
+        InlineKeyboardButton("✖ Close",           callback_data="fl_close"),
     ])
     return InlineKeyboardMarkup(btn)
 
 
 # ══════════════════════════════════════════════════════════
-#  CACHE HELPER
+#  CACHE
 # ══════════════════════════════════════════════════════════
 
 def _cache_set(key, value):
@@ -218,13 +216,15 @@ def _cache_set(key, value):
 #  MAIN SEARCH HANDLER
 # ══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.group & filters.text & filters.incoming & ~filters.via_bot & ~filters.bot, group=-1)
+@Client.on_message(
+    filters.group & filters.text & filters.incoming & ~filters.via_bot & ~filters.bot,
+    group=-1
+)
 async def give_filter(client, message):
     query_text = message.text.strip()
     if not query_text or query_text.startswith("/") or len(query_text) < 2:
         return
 
-    # ── Cache lookup ──────────────────────────────────────
     cache_key = query_text.lower()
     if cache_key in _search_cache:
         files = _search_cache[cache_key]
@@ -266,21 +266,21 @@ async def give_filter(client, message):
         quote=True,
         parse_mode="html"
     )
-    auto_delete(message, sent)   # ← delete both in 300 s
+    auto_delete(message, sent)
 
 
 # ══════════════════════════════════════════════════════════
-#  CALLBACKS
+#  CALLBACKS  — all prefixed fl_ to avoid conflicts
 # ══════════════════════════════════════════════════════════
 
-@Client.on_callback_query(filters.regex(r"^how_to_dl#"))
+@Client.on_callback_query(filters.regex(r"^fl_howdl#"))
 async def how_to_download_cb(client, query):
     await query.answer()
     sent = await query.message.reply(HOW_TO_DL_TEXT, quote=True, parse_mode="html")
     auto_delete(sent)
 
 
-@Client.on_callback_query(filters.regex(r"^lang#"))
+@Client.on_callback_query(filters.regex(r"^fl_lang#"))
 async def lang_cb(client, query):
     _, state_id, lang, qual = query.data.split("#", 3)
     if state_id not in filter_state:
@@ -298,7 +298,7 @@ async def lang_cb(client, query):
     await query.answer(f"Language: {lang}")
 
 
-@Client.on_callback_query(filters.regex(r"^qual#"))
+@Client.on_callback_query(filters.regex(r"^fl_qual#"))
 async def qual_cb(client, query):
     _, state_id, lang, qual = query.data.split("#", 3)
     if state_id not in filter_state:
@@ -316,7 +316,7 @@ async def qual_cb(client, query):
     await query.answer(f"Quality: {qual}")
 
 
-@Client.on_callback_query(filters.regex(r"^show#"))
+@Client.on_callback_query(filters.regex(r"^fl_show#"))
 async def show_cb(client, query):
     _, state_id, lang, qual = query.data.split("#", 3)
     if state_id not in filter_state:
@@ -342,7 +342,7 @@ async def show_cb(client, query):
     await query.answer(f"Showing {len(filtered)} result(s)")
 
 
-@Client.on_callback_query(filters.regex(r"^refilter#"))
+@Client.on_callback_query(filters.regex(r"^fl_refilter#"))
 async def refilter_cb(client, query):
     _, state_id = query.data.split("#", 1)
     if state_id not in filter_state:
@@ -358,7 +358,7 @@ async def refilter_cb(client, query):
     await query.answer()
 
 
-@Client.on_callback_query(filters.regex(r"^close_filter$"))
+@Client.on_callback_query(filters.regex(r"^fl_close$"))
 async def close_filter_cb(client, query):
     try:
         await query.message.delete()
@@ -367,16 +367,50 @@ async def close_filter_cb(client, query):
     await query.answer("Closed")
 
 
-@Client.on_callback_query(filters.regex(r"^filep#"))
-async def file_pm_cb(client, query):
-    _, file_id = query.data.split("#", 1)
-    await query.answer("Sending to your PM...", show_alert=False)
+@Client.on_callback_query(filters.regex(r"^fl_file#"))
+async def file_cb(client, query):
+    _, fdata = query.data.split("#", 1)
     try:
-        sent = await query.message.reply(
-            "✅ File is being sent to your PM!\n"
-            "If nothing arrives, start the bot in PM first.",
-            quote=True
+        msg_id, chat_id = fdata.split("|", 1)
+        msg_id  = int(msg_id)
+        chat_id = int(chat_id)
+    except Exception:
+        return await query.answer("Invalid file.", show_alert=True)
+
+    await query.answer("Sending to your PM...")
+    try:
+        file_msg = await client.get_messages(chat_id, msg_id)
+        doc = file_msg.document or file_msg.video or file_msg.audio
+        if not doc:
+            return await query.message.reply("File not found.", quote=True)
+
+        fname   = doc.file_name or "Unknown"
+        quality = detect_quality(fname).upper()
+        lang    = detect_lang(fname).capitalize()
+        size    = get_size(doc.file_size) if doc.file_size else "N/A"
+
+        caption = (
+            f"🎬 <b>{fname}</b>\n"
+            f"🌐 <b>Language:</b> {lang}\n"
+            f"📁 <b>Quality:</b> {quality}\n"
+            f"💾 <b>Size:</b> {size}\n\n"
+            f"<i>Sent by Eva Maria Bot</i>"
         )
+
+        await client.copy_message(
+            chat_id=query.from_user.id,
+            from_chat_id=chat_id,
+            message_id=msg_id,
+            caption=caption,
+            parse_mode="html"
+        )
+        sent = await query.message.reply("✅ File sent to your PM!", quote=True)
         auto_delete(sent)
+
     except Exception as e:
         logger.exception(e)
+        await query.message.reply(
+            "❌ Start the bot in PM first, then try again.\n"
+            f"👉 @{(await client.get_me()).username}",
+            quote=True
+        )
