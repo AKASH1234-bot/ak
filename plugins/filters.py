@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from database.ia_filterdb import get_search_results
+from database.ia_filterdb import get_search_results, Media
 from utils import get_size
 
 logger = logging.getLogger(__name__)
@@ -105,26 +105,24 @@ def deduplicate(files):
 
 
 # ══════════════════════════════════════════════════════════
-#  FILE HELPERS
+#  FILE HELPERS  — umongo Media object aware
 # ══════════════════════════════════════════════════════════
 
-def get_fname(f):
-    return (f.file_name if hasattr(f, 'file_name') else f.get("file_name", "")) or "Unknown"
+def get_fname(f) -> str:
+    return getattr(f, 'file_name', None) or f.get("file_name", "Unknown") if isinstance(f, dict) else (f.file_name or "Unknown")
 
 
-def get_fsize(f):
-    size = f.file_size if hasattr(f, 'file_size') else f.get("file_size", 0)
+def get_fsize(f) -> str:
+    size = getattr(f, 'file_size', None) or (f.get("file_size", 0) if isinstance(f, dict) else 0)
     return get_size(size) if size else "N/A"
 
 
-def get_fid(f):
-    # Store both message_id and chat_id so pm_filter can fetch the real file
-    msg_id  = str(f.id if hasattr(f, 'id') else f.get("message_id", "0"))
-    chat_id = str(f.chat.id if hasattr(f, 'chat') and f.chat else f.get("channel_id", "0"))
-    return f"{msg_id}|{chat_id}"
+def get_media_file_id(f) -> str:
+    """Returns the encoded file_id stored as _id in umongo Media."""
+    return str(getattr(f, 'file_id', None) or getattr(f, 'pk', None) or "")
 
 
-def make_btn_label(fname):
+def make_btn_label(fname: str) -> str:
     q     = detect_quality(fname).upper()
     short = fname[:38].strip()
     return f"📄 {short} [{q}]"
@@ -146,7 +144,7 @@ def apply_filters(files, lang="All", quality="All"):
 #  MESSAGE FORMAT
 # ══════════════════════════════════════════════════════════
 
-def results_header(query, files, lang, quality):
+def results_header(query, files, lang, quality) -> str:
     active = " | ".join(x for x in [lang, quality] if x != "All")
     text   = (
         f"🔍 <b>Results for:</b> <i>{query}</i>\n"
@@ -162,7 +160,7 @@ def results_header(query, files, lang, quality):
 #  KEYBOARD BUILDERS
 # ══════════════════════════════════════════════════════════
 
-def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
+def build_keyboard(state_id, sel_lang="All", sel_qual="All") -> InlineKeyboardMarkup:
     rows = []
     for i in range(0, len(LANGUAGES), 3):
         row = []
@@ -190,9 +188,12 @@ def build_keyboard(state_id, sel_lang="All", sel_qual="All"):
     return InlineKeyboardMarkup(rows)
 
 
-def build_file_keyboard(state_id, filtered):
+def build_file_keyboard(state_id, filtered) -> InlineKeyboardMarkup:
     btn = [
-        [InlineKeyboardButton(make_btn_label(get_fname(f)), callback_data=f"fl_file#{get_fid(f)}")]
+        [InlineKeyboardButton(
+            make_btn_label(get_fname(f)),
+            callback_data=f"fl_file#{get_media_file_id(f)}"
+        )]
         for f in filtered[:10]
     ]
     btn.append([
@@ -270,7 +271,7 @@ async def give_filter(client, message):
 
 
 # ══════════════════════════════════════════════════════════
-#  CALLBACKS  — all prefixed fl_ to avoid conflicts
+#  CALLBACKS
 # ══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^fl_howdl#"))
@@ -369,48 +370,47 @@ async def close_filter_cb(client, query):
 
 @Client.on_callback_query(filters.regex(r"^fl_file#"))
 async def file_cb(client, query):
-    _, fdata = query.data.split("#", 1)
+    _, file_id = query.data.split("#", 1)
+    if not file_id:
+        return await query.answer("File not found.", show_alert=True)
+
+    # Look up the Media document by its _id (file_id)
     try:
-        msg_id, chat_id = fdata.split("|", 1)
-        msg_id  = int(msg_id)
-        chat_id = int(chat_id)
-    except Exception:
-        return await query.answer("Invalid file.", show_alert=True)
+        results = await Media.find({"_id": file_id}).to_list(length=1)
+        if not results:
+            return await query.answer("File not found in database.", show_alert=True)
+        media = results[0]
+    except Exception as e:
+        logger.exception(e)
+        return await query.answer("Error fetching file.", show_alert=True)
+
+    fname   = media.file_name or "Unknown"
+    quality = detect_quality(fname).upper()
+    lang    = detect_lang(fname).capitalize()
+    size    = get_fsize(media)
+
+    caption = (
+        f"🎬 <b>{fname}</b>\n"
+        f"🌐 <b>Language:</b> {lang}\n"
+        f"📁 <b>Quality:</b> {quality}\n"
+        f"💾 <b>Size:</b> {size}\n\n"
+        f"<i>Sent by Eva Maria Bot</i>"
+    )
 
     await query.answer("Sending to your PM...")
     try:
-        file_msg = await client.get_messages(chat_id, msg_id)
-        doc = file_msg.document or file_msg.video or file_msg.audio
-        if not doc:
-            return await query.message.reply("File not found.", quote=True)
-
-        fname   = doc.file_name or "Unknown"
-        quality = detect_quality(fname).upper()
-        lang    = detect_lang(fname).capitalize()
-        size    = get_size(doc.file_size) if doc.file_size else "N/A"
-
-        caption = (
-            f"🎬 <b>{fname}</b>\n"
-            f"🌐 <b>Language:</b> {lang}\n"
-            f"📁 <b>Quality:</b> {quality}\n"
-            f"💾 <b>Size:</b> {size}\n\n"
-            f"<i>Sent by Eva Maria Bot</i>"
-        )
-
-        await client.copy_message(
+        await client.send_document(
             chat_id=query.from_user.id,
-            from_chat_id=chat_id,
-            message_id=msg_id,
+            document=media.file_id,
             caption=caption,
             parse_mode="html"
         )
         sent = await query.message.reply("✅ File sent to your PM!", quote=True)
         auto_delete(sent)
-
     except Exception as e:
         logger.exception(e)
         await query.message.reply(
-            "❌ Start the bot in PM first, then try again.\n"
+            f"❌ Please start the bot in PM first!\n"
             f"👉 @{(await client.get_me()).username}",
             quote=True
         )
