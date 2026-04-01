@@ -26,49 +26,44 @@ def get_lang(file_name: str) -> str:
     return "N/A"
 
 
+# Handles the old fileid# callback (kept for backward compatibility with
+# any existing keyboards already sent before the update)
 @Client.on_callback_query(filters.regex(r"^fileid#"))
 async def pm_filter_cb(client, query):
     _, file_id, chat_id = query.data.split("#", 2)
     await get_settings(int(chat_id))
-
     try:
         file_msg = await client.get_messages(int(chat_id), int(file_id))
     except Exception as e:
         logger.exception(e)
         return await query.answer("File not found!", show_alert=True)
 
-    fname = file_msg.document.file_name if file_msg.document else "Unknown"
-    fsize = file_msg.document.file_size if file_msg.document else 0
+    fname   = file_msg.document.file_name if file_msg.document else "Unknown"
+    fsize   = file_msg.document.file_size if file_msg.document else 0
     quality = get_quality(fname)
-    lang = get_lang(fname)
+    lang    = get_lang(fname)
     size_str = get_size(fsize)
 
     caption = (
-        f"{fname}\n"
-        f"Language : {lang}\n"
-        f"Quality  : {quality}\n"
-        f"File Size: {size_str}\n"
-        f"Sent by Eva Maria Bot"
+        f"🎬 <b>{fname}</b>\n"
+        f"🌐 <b>Language:</b> {lang}\n"
+        f"📁 <b>Quality:</b> {quality}\n"
+        f"💾 <b>Size:</b> {size_str}\n\n"
+        f"<i>Sent by Eva Maria Bot</i>"
     )
 
     await query.answer("Sending file...")
-
     try:
         await client.send_document(
             query.from_user.id,
             document=file_msg.document.file_id,
             caption=caption,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Share", switch_inline_query=fname[:30])]
-            ])
+            parse_mode="html",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Share", switch_inline_query=fname[:30])
+            ]])
         )
-        await query.message.reply(
-            "File sent to your PM!\nCheck your messages.",
-            quote=True
-        )
+        await query.message.reply("✅ File sent to your PM!\nCheck your messages.", quote=True)
     except Exception as e:
         logger.exception(e)
-        await query.message.reply(
-            "Start the bot in PM first!",
-            quote=True
-        )
+        await query.message.reply("❌ Start the bot in PM first!", quote=True)
