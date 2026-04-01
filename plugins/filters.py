@@ -218,10 +218,10 @@ def _cache_set(key, value):
 #  MAIN SEARCH HANDLER
 # ══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.group & filters.text & filters.incoming)
+@Client.on_message(filters.group & filters.text & filters.incoming & ~filters.via_bot & ~filters.bot, group=-1)
 async def give_filter(client, message):
     query_text = message.text.strip()
-    if not query_text or query_text.startswith("/"):
+    if not query_text or query_text.startswith("/") or len(query_text) < 2:
         return
 
     # ── Cache lookup ──────────────────────────────────────
